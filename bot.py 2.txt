@@ -1,0 +1,106 @@
+import requests
+import time
+import json
+import re
+import os
+from datetime import datetime
+
+TOKEN = os.getenv("8636562420:AAHyDJmo1cD1X7a2AnmGjbYiUP8v6j3TKrc")
+CHAT_ID = 739954208
+
+INTERVALO = 60
+
+OBJETIVOS = ["nba","nfl","mlb","ufc","soccer","lakers","celtics","warriors","heat","mets","yankees","dodgers","braves"]
+
+enviadas = set()
+
+def enviar(m):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    requests.get(url, params={"chat_id": CHAT_ID, "text": m})
+
+def precios(p):
+    if isinstance(p, str):
+        p = json.loads(p)
+    return [float(x) for x in p]
+
+def equipos(q):
+    m = re.search(r"(.+?)\s+(vs\.?|v\.)\s+(.+)", q, re.I)
+    return (m.group(1).strip(), m.group(3).strip()) if m else (None, None)
+
+def score(prob, vol):
+    s = 0
+    if vol > 100000: s += 40
+    elif vol > 50000: s += 30
+    elif vol > 20000: s += 20
+
+    if 0.4 <= prob <= 0.65: s += 25
+    elif prob > 0.75: s -= 10
+
+    return min(s,100)
+
+def run():
+    url = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=500"
+    data = requests.get(url).json()
+
+    for m in data:
+        q = m.get("question","")
+        p = m.get("outcomePrices")
+
+        if not q or not p: continue
+        if not any(x in q.lower() for x in OBJETIVOS): continue
+        if "vs" not in q.lower(): continue
+
+        try:
+            pr = precios(p)
+            yes, no = pr[0], pr[1]
+
+            vol = float(m.get("volume",0) or 0)
+            if vol < 15000: continue
+
+            t1, t2 = equipos(q)
+            if not t1: continue
+
+            if yes > no:
+                lado, prob, price = t1, yes, yes
+            else:
+                lado, prob, price = t2, no, no
+
+            s = score(prob, vol)
+
+            if s >= 70:
+                dec = "🟢 ENTRAR"
+            elif s >= 50:
+                dec = "🟡 ESPERAR"
+            else:
+                dec = "⚪ NO ENTRAR"
+
+            key = f"{q}-{lado}-{round(price,2)}"
+            if key in enviadas: continue
+            enviadas.add(key)
+
+            msg = f"""🐋 WHALE SIGNAL
+
+🏟 {q}
+
+🎯 A FAVOR DE: {lado.upper()}
+🚦 {dec}
+
+💰 Volumen: ${vol:,.0f}
+📊 Precio: {price:.2f} ({prob*100:.1f}%)
+
+🎯 TP: {price+0.12:.2f}
+🛑 SL: {price-0.07:.2f}
+
+⭐ Score: {s}/100
+"""
+
+            enviar(msg)
+            print("sent")
+
+        except:
+            continue
+
+while True:
+    print("running...")
+    run()
+    time.sleep(INTERVALO)
